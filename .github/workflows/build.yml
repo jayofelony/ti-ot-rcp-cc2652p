@@ -1,0 +1,89 @@
+name: build-ot-rcp
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    env:
+      OT_TI_REF: thread-v1.4-ti-2.1
+      # bootstrap installs this exact toolchain:
+      GCC_ARMCOMPILER: /opt/arm-gnu-toolchain-12.2.rel1-x86_64-arm-none-eabi
+      RCP_BAUD: "460800"
+
+    steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /opt/hostedtoolcache /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          df -h /
+
+      - name: Checkout ot-ti (+ needed submodules only)
+        run: |
+          git clone --branch "$OT_TI_REF" --depth 1 https://github.com/TexasInstruments/ot-ti.git ot-ti
+          cd ot-ti
+          git submodule update --init --depth 1 --recursive -- openthread
+          git submodule update --init --depth 1 -- \
+            third_party/freertos/repo \
+            third_party/mbedtls/repo \
+            third_party/ti_simplelink_sdk/repo_cc13xx_cc26xx
+          # We target CC1352P_2 (cc13x2_cc26x2). The cc23xx/cc27xx SDK is never
+          # referenced by CMake for this board, but script/build unconditionally
+          # runs `make -C` on it. Give it a no-op Makefile instead of a 2 GB clone.
+          mkdir -p third_party/ti_simplelink_sdk/repo_cc23xx_cc27xx
+          printf 'all:\n\t@true\n%%:\n\t@true\n' > third_party/ti_simplelink_sdk/repo_cc23xx_cc27xx/Makefile
+
+      - name: Customize for the CH340 dongle
+        run: |
+          cd ot-ti
+          # ot-rcp UART: drop 921600 -> 460800 (CH340-safe; no HW flow control is
+          # already the default in this driver).
+          sed -i -E "s/(params\.baudRate[[:space:]]*=[[:space:]]*)921600;/\1${RCP_BAUD};/" src/uart.c
+          echo "----- src/uart.c baud lines -----"
+          grep -nE 'baudRate' src/uart.c
+
+      - name: Bootstrap TI toolchain (SysConfig + ARM GCC 12.2)
+        run: |
+          cd ot-ti
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build lib32z1
+          ./script/bootstrap
+          ls -d "$GCC_ARMCOMPILER" && "$GCC_ARMCOMPILER/bin/arm-none-eabi-gcc" --version | head -1
+
+      - name: Build ot-rcp for CC1352P_2 / CC2652P
+        run: |
+          cd ot-ti
+          export PATH="$GCC_ARMCOMPILER/bin:$PATH"
+          ./script/build CC1352P_2_LAUNCHXL
+          echo "----- build/bin -----"
+          ls -la build/bin
+
+      - name: Package firmware
+        run: |
+          cd ot-ti/build/bin
+          OBJCOPY="$GCC_ARMCOMPILER/bin/arm-none-eabi-objcopy"
+          SIZE="$GCC_ARMCOMPILER/bin/arm-none-eabi-size"
+          "$OBJCOPY" -O ihex   ot-rcp.out ot-rcp.hex
+          "$OBJCOPY" -O binary ot-rcp.out ot-rcp-raw.bin
+          "$SIZE" ot-rcp.out | tee ot-rcp.size.txt
+          sha256sum ot-rcp.hex ot-rcp-raw.bin | tee ot-rcp.sha256
+          echo "highest hex address:"
+          grep -E '^:02000004' ot-rcp.hex | tail -1 || true
+          ls -la
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ot-rcp-cc2652p-${{ env.RCP_BAUD }}
+          if-no-files-found: error
+          path: |
+            ot-ti/build/bin/ot-rcp.hex
+            ot-ti/build/bin/ot-rcp.out
+            ot-ti/build/bin/ot-rcp.map
+            ot-ti/build/bin/ot-rcp-raw.bin
+            ot-ti/build/bin/ot-rcp.size.txt
+            ot-ti/build/bin/ot-rcp.sha256
