@@ -43,11 +43,26 @@ jobs:
       - name: Customize for the CH340 dongle
         run: |
           cd ot-ti
-          # ot-rcp UART: drop 921600 -> 460800 (CH340-safe; no HW flow control is
-          # already the default in this driver).
+          # 1) ot-rcp UART: drop 921600 -> 460800 (CH340-safe; no HW flow control
+          #    is already the default in this driver).
           sed -i -E "s/(params\.baudRate[[:space:]]*=[[:space:]]*)921600;/\1${RCP_BAUD};/" src/uart.c
           echo "----- src/uart.c baud lines -----"
           grep -nE 'baudRate' src/uart.c
+
+          # 2) CRITICAL: TI's default CCFG DISABLES the ROM serial-bootloader
+          #    backdoor. Without this the dongle can only be re-flashed over JTAG.
+          #    Re-enable it on DIO15 active-low (matches the stock Z-Stack CCFG
+          #    these CH340 CC2652P dongles ship with).
+          cat >> src/openthread.syscfg <<'SYSCFG'
+
+          /* --- keep the USB serial bootloader recoverable on this dongle --- */
+          Device.enableBootloader         = true;
+          Device.enableBootloaderBackdoor = true;
+          Device.dioBootloaderBackdoor    = 15;
+          Device.levelBootloaderBackdoor  = "Active low";
+          SYSCFG
+          echo "----- appended CCFG bootloader-backdoor override -----"
+          tail -8 src/openthread.syscfg
 
       - name: Bootstrap TI toolchain (SysConfig + ARM GCC 12.2)
         run: |
