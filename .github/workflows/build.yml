@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -87,3 +90,22 @@ jobs:
             ot-ti/build/bin/ot-rcp-raw.bin
             ot-ti/build/bin/ot-rcp.size.txt
             ot-ti/build/bin/ot-rcp.sha256
+
+      - name: Publish release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          cd ot-ti/build/bin
+          # a stable, versioned asset name so flash_dongle.py can resolve it
+          cp ot-rcp.hex "CC1352P2_CC2652P_launchpad_ot-rcp_${RCP_BAUD}.hex"
+          TAG="ot-rcp-$(date +%Y%m%d)-${RCP_BAUD}"
+          NOTES="Custom OpenThread RCP for a button-less CH340 **CC2652P** dongle.
+          UART ${RCP_BAUD} 8N1, no flow control. Board profile CC1352P_2 (DIO12/DIO13).
+          Built from TexasInstruments/ot-ti@${OT_TI_REF}.
+          Flash with: flash_dongle.py --firmware thread-rcp"
+          gh release view "$TAG" >/dev/null 2>&1 \
+            && gh release upload "$TAG" "CC1352P2_CC2652P_launchpad_ot-rcp_${RCP_BAUD}.hex" ot-rcp-raw.bin --clobber \
+            || gh release create "$TAG" --title "$TAG" --notes "$NOTES" \
+                 "CC1352P2_CC2652P_launchpad_ot-rcp_${RCP_BAUD}.hex" ot-rcp-raw.bin ot-rcp.size.txt
