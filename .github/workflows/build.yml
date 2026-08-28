@@ -105,7 +105,8 @@ jobs:
           UART ${RCP_BAUD} 8N1, no flow control. Board profile CC1352P_2 (DIO12/DIO13).
           Built from TexasInstruments/ot-ti@${OT_TI_REF}.
           Flash with: flash_dongle.py --firmware thread-rcp"
-          gh release view "$TAG" >/dev/null 2>&1 \
-            && gh release upload "$TAG" "CC1352P2_CC2652P_launchpad_ot-rcp_${RCP_BAUD}.hex" ot-rcp-raw.bin --clobber \
-            || gh release create "$TAG" --title "$TAG" --notes "$NOTES" \
+          R="$GITHUB_REPOSITORY"
+          gh release view "$TAG" -R "$R" >/dev/null 2>&1 \
+            && gh release upload "$TAG" -R "$R" "CC1352P2_CC2652P_launchpad_ot-rcp_${RCP_BAUD}.hex" ot-rcp-raw.bin --clobber \
+            || gh release create "$TAG" -R "$R" --title "$TAG" --notes "$NOTES" \
                  "CC1352P2_CC2652P_launchpad_ot-rcp_${RCP_BAUD}.hex" ot-rcp-raw.bin ot-rcp.size.txt
